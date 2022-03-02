@@ -1,0 +1,43 @@
+{
+  "scanners": {
+    "checkov": {
+      "image": "bridgecrew/checkov:latest",
+      "output_format": "json",
+      "output_filename": "results_checkov.json"
+    },
+    "tfsec": {
+      "image": "aquasec/tfsec:latest",
+      "output_format": "json",
+      "output_filename": "results_tfsec.json"
+    },
+    "kics": {
+      "image": "checkmarx/kics:latest",
+      "output_format": "json",
+      "output_filename": "results.json"
+    },
+    "terrascan": {
+      "image": "accurics/terrascan:latest",
+      "output_format": "json",
+      "output_filename": "results_terrascan.json"
+    },
+    "trivy": {
+      "image": "aquasec/trivy:latest",
+      "output_format": "json",
+      "output_filename": "results_trivy.json"
+    }
+  },
+  "input": {
+    "goats_source": "goats.json",
+    "local_source": "local.json"
+  },
+  "output": {
+    "clones_destination": "/tmp",
+    "goats_destination": "/tmp/goats",
+    "results_destination": "/tmp/results",
+    "results_filename": "milking_goat_results.json"
+  },
+  "logging": {
+    "docker_version": false,
+    "command_line_args": false
+  }
+}

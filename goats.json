@@ -1,0 +1,28 @@
+{
+  "targets": [
+    {
+      "source": "https://github.com/bridgecrewio/terragoat.git",
+      "local_folder": "terragoat"
+    },
+    {
+      "source": "https://github.com/bridgecrewio/cfngoat.git",
+      "local_folder": "cfngoat"
+    },
+    {
+      "source": "https://github.com/bridgecrewio/kustomizegoat.git",
+      "local_folder": "kustomizegoat"
+    },
+    {
+      "source": "https://github.com/accurics/KaiMonkey.git",
+      "local_folder": "kaimonkey"
+    },
+    {
+      "source": "https://github.com/nccgroup/sadcloud.git",
+      "local_folder": "sadcloud"
+    },
+    {
+      "source": "https://github.com/madhuakula/kubernetes-goat.git",
+      "local_folder": "kubernetes-goat"
+    }
+  ]
+}

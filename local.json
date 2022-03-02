@@ -1,0 +1,12 @@
+{
+  "targets": [
+    {
+      "source": "/tmp/terragoat",
+      "local_folder": "terragoat"
+    },
+    {
+      "source": "/tmp/sadcloud",
+      "local_folder": "sadcloud"
+    }
+  ]
+}
