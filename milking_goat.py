@@ -20,46 +20,52 @@ import docker
 from docker import errors
 
 # Hardcoded variables:
-__version__ = '0.1'
+__version__ = '0.1.1'
 
+# Default exit signals can be changed using config file
 EXIT_OK = 0
-EXIT_NOOP = 0
-EXIT_ROOT = 1
-EXIT_NOT_WRITABLE = 2
-EXIT_FILE_NOT_FOUND = 3
-EXIT_INVALID_SOURCE = 4
-EXIT_INVALID_CONFIG = 5
-EXIT_FILE_FORMAT = 6
-EXIT_JSON_FILE = 7
+EXIT_FAIL_LOW = 1
+EXIT_FAIL_MEDIUM = 2
+EXIT_FAIL_HIGH = 3
+
+# Hardcoded signals
+EXIT_NOOP = 10
+EXIT_ROOT = 11
+EXIT_NOT_WRITABLE = 12
+EXIT_FILE_NOT_FOUND = 13
+EXIT_INVALID_SOURCE = 14
+EXIT_INVALID_CONFIG = 15
+EXIT_FILE_FORMAT = 16
+EXIT_JSON_FILE = 17
 
 
 def print_version():
-    print("\nMilking the Goat v{}\n".format(__version__))
-    return True     # Do not remove, used in main scope, in-line condition
+    log_and_print("info", "\nMilking the Goat v{}\n".format(__version__))
+    return True  # Do not remove, used in main scope, in-line condition
 
 
 def running_as_root():
-    args.verbose and print("To reduce risks, do not run this script as root.")
+    log_and_print("critical", "To reduce risks, do not run as root. To ignore this warning, use flag --ignore-root.")
     sys.exit(EXIT_ROOT)
 
 
 def dest_not_writable(dest):
-    args.verbose and print("Error: Destination is not writable: " + dest)
+    log_and_print("critical", "Error: Destination is not writable: {}".format(dest))
     sys.exit(EXIT_NOT_WRITABLE)
 
 
 def invalid_source(source):
-    args.verbose and print("Error: " + source + " is not a valid directory.")
+    log_and_print("critical", "Error: {} is not a valid directory.".format(source))
     sys.exit(EXIT_INVALID_SOURCE)
 
 
 def missing_config(config_file):
-    args.verbose and print("Error: Could not locate config file: " + config_file)
+    log_and_print("critical", "Error: Could not locate config file: {}".format(config_file))
     sys.exit(EXIT_INVALID_CONFIG)
 
 
 def noop():
-    args.verbose and print("All scans skipped and clean up not set. Nothing to do here.")
+    log_and_print("info", "All scans skipped and clean up is not set. Nothing to do here.")
     sys.exit(EXIT_NOOP)
 
 
@@ -104,7 +110,7 @@ def clone_repo(source_dir):
     :param source_dir: Comes from args.source
     :return: True if successful or exits with error code
     """
-    args.verbose and print("Cloning repository in " + dest_clones)
+    log_and_print("info", "Cloning repository in " + dest_clones)
 
     # This is an attempt to automate the naming convention for a local folder where a Git repo will be cloned
     # Example: https://github.com/user/repo.git --> repo
@@ -113,8 +119,12 @@ def clone_repo(source_dir):
     local_folder = os.path.basename(os.path.normpath(args.source)).replace(".git", "")
     try:
         # git clone [repo]
-        os.path.isdir(dest_clones + "/" + local_folder) \
-            or Repo.clone_from(source_dir, dest_clones + "/" + local_folder)
+        repo_to_clone = dest_clones + "/" + local_folder
+        if not os.path.isdir(repo_to_clone):
+            log_and_print("debug", "Cloning repository {}.".format(repo_to_clone))
+            Repo.clone_from(source_dir, repo_to_clone)
+        else:
+            log_and_print("debug", "Repo {} has already been cloned.".format(repo_to_clone))
 
         return local_folder
     except PermissionError:
@@ -130,7 +140,7 @@ def clone_goats():
     # To fully automate this function using config file, I would need a 2D array, with the local name and Github URL
     # not os.access(dest_clones, os.W_OK) and dest_not_writable(dest_clones)
 
-    args.verbose and print("Cloning the Goats in " + dest_clones)
+    log_and_print("info", "Cloning the Goats in " + dest_clones)
 
     from git import exc
     try:
@@ -138,8 +148,12 @@ def clone_goats():
         for target in json_goats["targets"]:
             local_folder = target["local_folder"]
             # Avoid cloning an already cloned repo
-            os.path.isdir(dest_clones + "/" + local_folder) \
-                or Repo.clone_from(target["source"], dest_clones + "/" + local_folder)
+            repo_to_clone = dest_clones + "/" + local_folder
+            if not os.path.isdir(repo_to_clone):
+                log_and_print("debug", "Cloning repository {}.".format(repo_to_clone))
+                Repo.clone_from(target["source"], repo_to_clone)
+            else:
+                log_and_print("debug", "Repo {} has already been cloned.".format(repo_to_clone))
     except (PermissionError, exc.GitCommandError):
         dest_not_writable(dest_clones)
 
@@ -151,10 +165,10 @@ def docker_save_log(str_log, output_file):
                 res = json.loads(str_log)
                 json.dump(res, f, indent=4)
             except json.decoder.JSONDecodeError:
-                args.verbose and print("Error: Could not understand stdout data.".format(output_file))
+                log_and_print("error", "Error: Could not understand stdout data.".format(output_file))
                 return False
     except FileNotFoundError:
-        args.verbose and print("Error: Could not write to file {}.".format(output_file))
+        log_and_print("error", "Error: Could not write to file {}.".format(output_file))
         return False
 
 
@@ -167,7 +181,7 @@ def run_docker_checkov(source_directory, force_docker_pull):
     :return: True
     """
     if not args.skipCheckov:
-        args.verbose and print("Running Checkov on {}...".format(source_directory))
+        log_and_print("info", "Running Checkov on {}...".format(source_directory))
 
         docker_pull_image(docker_image_checkov, force_docker_pull)
         start = time.time()
@@ -195,8 +209,8 @@ def run_docker_checkov(source_directory, force_docker_pull):
         end = time.time()
         total_time = str(round(end - start, 2)) + " seconds"
         str_it_took = ", it took " + total_time
-        args.verbose and print("Docker ran Checkov container in {}{} and the report was saved in {}."
-                               .format(source_directory, str_it_took, results_checkov))
+        log_and_print("info", "Docker ran Checkov container in {}{} and the report was saved in {}."
+                      .format(source_directory, str_it_took, results_checkov))
 
         process_checkov(load_from_json(results_checkov), results_checkov,
                         os.path.basename(os.path.normpath(source_directory)), total_time)
@@ -212,7 +226,7 @@ def run_docker_tfsec(source_directory, force_docker_pull):
     """
     # Ref: https://aquasecurity.github.io/tfsec/v1.4.2/getting-started/usage/
     if not args.skipTfsec:
-        args.verbose and print("Running tfsec on {}...".format(source_directory))
+        log_and_print("info", "Running tfsec on {}...".format(source_directory))
 
         docker_pull_image(docker_image_tfsec, force_docker_pull)
         start = time.time()
@@ -245,8 +259,8 @@ def run_docker_tfsec(source_directory, force_docker_pull):
         end = time.time()
         total_time = str(round(end - start, 2)) + " seconds"
         str_it_took = ", it took " + total_time
-        args.verbose and print("Docker ran tfsec container in {}{} and the report was saved in {}."
-                               .format(source_directory, str_it_took, results_tfsec))
+        log_and_print("info", "Docker ran tfsec container in {}{} and the report was saved in {}."
+                      .format(source_directory, str_it_took, results_tfsec))
 
         process_tfsec(load_from_json(results_tfsec), results_tfsec,
                       os.path.basename(os.path.normpath(source_directory)), total_time)
@@ -261,7 +275,7 @@ def run_docker_kics(source_directory, force_docker_pull):
     :return: True
     """
     if not args.skipKics:
-        args.verbose and print("Running KICS on {}...".format(source_directory))
+        log_and_print("info", "Running KICS on {}...".format(source_directory))
 
         docker_pull_image(docker_image_kics, force_docker_pull)
         start = time.time()
@@ -301,8 +315,8 @@ def run_docker_kics(source_directory, force_docker_pull):
         end = time.time()
         total_time = str(round(end - start, 2)) + " seconds"
         str_it_took = ", it took " + total_time
-        args.verbose and print("Docker ran KICS container in {}{} and the report was saved in {}."
-                               .format(source_directory, str_it_took, results_kics.rsplit('/', 1)[0] + "/results.json"))
+        log_and_print("info", "Docker ran KICS container in {}{} and the report was saved in {}."
+                      .format(source_directory, str_it_took, results_kics.rsplit('/', 1)[0] + "/results.json"))
 
         process_kics(load_from_json(results_kics), results_kics,
                      os.path.basename(os.path.normpath(source_directory)), total_time)
@@ -317,7 +331,7 @@ def run_docker_terrascan(source_directory, force_docker_pull):
     :return: True
     """
     if not args.skipTerrascan:
-        args.verbose and print("Running Terrascan on {}...".format(source_directory))
+        log_and_print("info", "Running Terrascan on {}...".format(source_directory))
 
         docker_pull_image(docker_image_terrascan, force_docker_pull)
         start = time.time()
@@ -349,8 +363,8 @@ def run_docker_terrascan(source_directory, force_docker_pull):
         end = time.time()
         total_time = str(round(end - start, 2)) + " seconds"
         str_it_took = ", it took " + total_time
-        args.verbose and print("Docker ran Terrascan container in {}{} and the report was saved in {}."
-                               .format(source_directory, str_it_took, results_terrascan))
+        log_and_print("info", "Docker ran Terrascan container in {}{} and the report was saved in {}."
+                      .format(source_directory, str_it_took, results_terrascan))
 
         process_terrascan(load_from_json(results_terrascan), results_terrascan,
                           os.path.basename(os.path.normpath(source_directory)), total_time)
@@ -365,7 +379,7 @@ def run_docker_trivy(source_directory, force_docker_pull):
     :return: True
     """
     if not args.skipTrivy:
-        args.verbose and print("Running Trivy on {}...".format(source_directory))
+        log_and_print("info", "Running Trivy on {}...".format(source_directory))
 
         docker_pull_image(docker_image_trivy, force_docker_pull)
         start = time.time()
@@ -406,8 +420,8 @@ def run_docker_trivy(source_directory, force_docker_pull):
         end = time.time()
         total_time = str(round(end - start, 2)) + " seconds"
         str_it_took = ", it took " + total_time
-        args.verbose and print("Docker ran Trivy container in {}{} and the report was saved in {}."
-                               .format(source_directory, str_it_took, results_trivy_output_dir_file))
+        log_and_print("info", "Docker ran Trivy container in {}{} and the report was saved in {}."
+                      .format(source_directory, str_it_took, results_trivy_output_dir_file))
 
         process_trivy(load_from_json(results_trivy_output_dir_file), results_trivy_output_dir_file,
                       os.path.basename(os.path.normpath(source_directory)), total_time)
@@ -432,13 +446,13 @@ def run_scan():
     if not args.source:
 
         # Goats or Locals?
-        if args.locals:             # Domestic goats
+        if args.locals:  # Domestic goats
             json_iterable = get_goats(local_file)
-        else:   # args.goats == True, Foreign Goats
+        else:  # args.goats == True, Foreign Goats
             json_iterable = get_goats(goats_file)
             clone_goats()
 
-        args.verbose and print("Starting IaC code scans...")
+        log_and_print("info", "Starting IaC code scans...")
 
         for target in json_iterable["targets"]:
             local_folder = target["local_folder"]
@@ -449,7 +463,8 @@ def run_scan():
             try:
                 Path(results_dir).mkdir(parents=True, exist_ok=True)
             except FileExistsError:
-                pass
+                # Should not be called due to 'exist_ok=True'
+                log_and_print("debug", "Folder {} already exists.".format(results_dir))
             except PermissionError:
                 dest_not_writable(results_dir)
 
@@ -465,14 +480,14 @@ def run_scan():
             results_trivy = \
                 str(results_destination + "/" + local_folder + "/" + results_trivy_filename).replace("//", "/")
 
-            # run_docker(source)
+            # Run the tools
             run_docker_checkov(source, force_docker_pull)
             run_docker_tfsec(source, force_docker_pull)
             run_docker_kics(source, force_docker_pull)
             run_docker_terrascan(source, force_docker_pull)
             run_docker_trivy(source, force_docker_pull)
 
-        args.verbose and print("Finished scanning IaC code.")
+        log_and_print("info", "Finished scanning IaC code.")
 
     else:
         # The user provided a URL or a source directory.
@@ -488,18 +503,20 @@ def run_scan():
             # The user provided a source directory
             os.path.isdir(args.source) or invalid_source(args.source)
             # dest_clones is the default destination for Goat clones
-            local_folder = args.source      # Here, the user is picking a full path
+            local_folder = args.source  # Here, the user is picking a full path
             source = str(local_folder).replace("//", "/")
             # Declared outside; results_destination is the default folder for reports
             results_local_folder = results_destination + "/" + str(local_folder).rstrip("/").rsplit("/", 1)[1]
 
-        args.verbose and print("Starting IaC code scans...")
+        log_and_print("info", "Starting IaC code scans...")
 
         try:
-            os.path.isdir(results_local_folder) or \
+            if not os.path.isdir(results_local_folder):
+                log_and_print("debug", "Creating folder {}.".format(results_local_folder))
                 Path(results_local_folder).mkdir(parents=True, exist_ok=True)
         except FileExistsError:
-            pass
+            # If the folder exists, we will use it
+            log_and_print("debug", "Folder {} already exists.".format(results_local_folder))
         except PermissionError:
             dest_not_writable(results_local_folder)
 
@@ -515,7 +532,7 @@ def run_scan():
         run_docker_terrascan(source, force_docker_pull)
         run_docker_trivy(source, force_docker_pull)
 
-        args.verbose and print("Finished scanning IaC code.")
+        log_and_print("info", "Finished scanning IaC code.")
 
 
 def process_checkov(json_object, json_filename, source, total_time):
@@ -554,7 +571,6 @@ def process_checkov(json_object, json_filename, source, total_time):
             try:
                 json_milk[source]["checkov"][str_check] = {}
             except KeyError:
-                pass
                 try:
                     json_milk[source]["checkov"] = {
                         "json_file": json_filename,
@@ -567,7 +583,6 @@ def process_checkov(json_object, json_filename, source, total_time):
             finally:
                 json_milk[source]["checkov"][str_check].update(json_checkov_check)
     except TypeError:
-        pass
         # It doesn't, but maybe Checkov doesn't have policies for that type of file
         # So, we won't find 'check_type' there. Let's search for 'passed', 'failed', 'skipped'
         try:
@@ -579,10 +594,10 @@ def process_checkov(json_object, json_filename, source, total_time):
                 json_milk[source]["checkov"]["none"] = {}
                 json_milk[source]["checkov"]["none"].update(json_checkov)
 
-                args.verbose and print("Warning: Checkov could not process this application.")
+                log_and_print("warn", "Warning: Checkov could not process this application.")
         except (KeyError, TypeError):
             # No, there is something wrong with this file
-            args.verbose and print("Error: could not process this file: {}".format(json_filename))
+            log_and_print("error", "Error: could not process this file: {}".format(json_filename))
 
 
 def process_tfsec(json_object, json_filename, source, total_time):
@@ -627,7 +642,6 @@ def process_tfsec(json_object, json_filename, source, total_time):
         json_milk[source]["tfsec"] = {}
         json_milk[source]["tfsec"].update(json_tfsec)
     except TypeError:
-        pass
         try:
             if json_object["results"] == "null":
                 json_tfsec = {
@@ -642,9 +656,9 @@ def process_tfsec(json_object, json_filename, source, total_time):
                 json_milk[source]["tfsec"] = {}
                 json_milk[source]["tfsec"].update(json_tfsec)
 
-                args.verbose and print("Warning: tfsec did not process this application.")
+                log_and_print("warn", "Warning: tfsec did not process this application.")
         except KeyError:
-            args.verbose and print("Error: could not process this file: {}".format(json_filename))
+            log_and_print("error", "Error: could not process this file: {}".format(json_filename))
 
 
 def process_kics(json_object, json_filename, source, total_time):
@@ -694,8 +708,7 @@ def process_kics(json_object, json_filename, source, total_time):
         # Let's append it to the main 'stash' and look for other check_types
         json_milk[source]["kics"] = {}
         json_milk[source]["kics"].update(json_kics)
-    except TypeError:
-        pass
+    except (KeyError, TypeError):
         # It doesn't, but maybe KICS doesn't have policies for that type of file
         # So, we won't find 'check_type' there. Let's search for 'passed', 'failed', 'skipped'
         try:
@@ -706,10 +719,10 @@ def process_kics(json_object, json_filename, source, total_time):
                 }
                 json_milk[source]["kics"] = {}
                 json_milk[source]["kics"].update(json_kics)
-                args.verbose and print("Warning: KICS could not process this application.")
+                log_and_print("warn", "Warning: KICS could not process this application.")
         except (KeyError, TypeError):
             # No, there is something wrong with this file
-            args.verbose and print("Error: could not process this file: {}".format(json_filename))
+            log_and_print("error", "Error: could not process this file: {}".format(json_filename))
 
 
 def process_terrascan(json_object, json_filename, source, total_time):
@@ -753,9 +766,9 @@ def process_terrascan(json_object, json_filename, source, total_time):
         json_milk[source]["terrascan"] = {}
         json_milk[source]["terrascan"].update(json_terrascan)
     except TypeError:
-        args.verbose and print("Warning: Terrascan could not process this application.")
+        log_and_print("warn", "Warning: Terrascan could not process this application.")
     except KeyError:
-        args.verbose and print("Error: could not process this file: {}".format(json_filename))
+        log_and_print("error", "Error: could not process this file: {}".format(json_filename))
 
 
 def process_trivy(json_object, json_filename, source, total_time):
@@ -813,7 +826,6 @@ def process_trivy(json_object, json_filename, source, total_time):
         json_milk[source]["trivy"] = {}
         json_milk[source]["trivy"].update(json_trivy)
     except TypeError:
-        pass
         try:
             if json_object["results"] == "null":
                 json_trivy = {
@@ -828,9 +840,9 @@ def process_trivy(json_object, json_filename, source, total_time):
                 json_milk[source]["trivy"] = {}
                 json_milk[source]["trivy"].update(json_trivy)
 
-                args.verbose and print("Warning: Trivy did not process this application.")
+                log_and_print("warn", "Warning: Trivy did not process this application.")
         except KeyError:
-            args.verbose and print("Error: could not process this file: {}".format(json_filename))
+            log_and_print("error", "Error: could not process this file: {}".format(json_filename))
 
 
 def load_from_json(json_filename):
@@ -846,10 +858,10 @@ def load_from_json(json_filename):
                 res = json.loads(f.read())
                 return res
             except json.decoder.JSONDecodeError:
-                args.verbose and print("Error: Could not open {} as JSON data file.".format(json_filename))
+                log_and_print("error", "Error: Could not decode {} as JSON data file.".format(json_filename))
                 return False
     except FileNotFoundError:
-        args.verbose and print("Error: Could not find file {}.".format(json_filename))
+        log_and_print("error", "Error: Could not find file {}.".format(json_filename))
         return False
 
 
@@ -868,31 +880,37 @@ def write_json_to_file(data, filename):
         full_dest = full_dest.replace(c, "")
     full_dest = full_dest.replace("//", "/")
 
-    try:
-        date_format = "%Y-%m-%d %H:%M:%S"
-        data["milking_the_goat"]["end_time"] = str(datetime.datetime.now().strftime(date_format))
-        dt_duration = datetime.datetime.strptime(data["milking_the_goat"]["end_time"], date_format) - \
-            datetime.datetime.strptime(data["milking_the_goat"]["start_time"], date_format)
-        data["milking_the_goat"]["duration_seconds"] = int(dt_duration.total_seconds())
-        data["milking_the_goat"]["extended_duration"] = display_time(int(dt_duration.total_seconds()))
+    date_format = "%Y-%m-%d %H:%M:%S"
+    data["milking_the_goat"]["end_time"] = str(datetime.datetime.now().strftime(date_format))
+    dt_duration = datetime.datetime.strptime(data["milking_the_goat"]["end_time"], date_format) \
+        - datetime.datetime.strptime(data["milking_the_goat"]["start_time"], date_format)
+    data["milking_the_goat"]["duration_seconds"] = int(dt_duration.total_seconds())
+    data["milking_the_goat"]["extended_duration"] = display_time(int(dt_duration.total_seconds()))
 
+    try:
         Path(results_destination).mkdir(parents=True, exist_ok=True)
 
         with open(full_dest, 'w') as f:
             json.dump(data, f, indent=4)
-            args.verbose and print("Milking the Goat JSON saved to {}".format(full_dest))
+            log_and_print("info", "Milking the Goat JSON saved to {}".format(full_dest))
     except PermissionError:
         dest_not_writable(full_dest)
 
 
 def display_time(seconds, granularity=5):
+    """
+    Converts seconds in string text with weeks, days, hours, etc.
+    :param seconds: The number of seconds we want to convert.
+    :param granularity: How far we should go in the intervals JSON.
+    :return: String
+    """
     # Modified from:
     # https://stackoverflow.com/questions/4048651/python-function-to-convert-seconds-into-minutes-hours-and-days
     result = []
     intervals = (
         ('weeks', 604800),  # 60 * 60 * 24 * 7
-        ('days', 86400),  # 60 * 60 * 24
-        ('hours', 3600),  # 60 * 60
+        ('days', 86400),    # 60 * 60 * 24
+        ('hours', 3600),    # 60 * 60
         ('minutes', 60),
         ('seconds', 1),
     )
@@ -914,18 +932,24 @@ def create_json_structure():
     Called by main().
     :return: True if main JSON object is successfully updated; otherwise, exits with error code
     """
-    dc = docker.from_env()
-    try:
-        if bool_command_line_args:
-            str_command_line_args = str(args)
-        else:
-            str_command_line_args = None
 
+    if bool_command_line_args:
+        str_command_line_args = str(args)
+    else:
+        str_command_line_args = None
+
+    try:
+        dc = docker.from_env()
         if bool_docker_version:
             str_docker_version = dc.version()
         else:
             str_docker_version = None
 
+    except docker.errors.APIError as e:
+        log_and_print("error", "Error: Could not read version from Docker client.")
+        str_docker_version = None
+
+    finally:
         # JSON result file, schema version 1
         data = {
             "milking_the_goat": {
@@ -940,12 +964,13 @@ def create_json_structure():
             }
         }
 
+    try:
         if not args.source:
             # Milking the well-known Goats from Github
             # Goats or Locals?
             if args.locals:  # Domestic goats
                 json_iterable = get_goats(local_file)
-            else:  # args.goats == True, Foreign Goats
+            else:  # args.goats == True, Foreign goats
                 json_iterable = get_goats(goats_file)
 
             for target in json_iterable["targets"]:
@@ -965,8 +990,9 @@ def create_json_structure():
             data.update(json_local)
 
         json_milk.update(data)
+
     except (TypeError, KeyError, IndexError):
-        args.verbose and print("Error: Could not read Goats from config file.")
+        log_and_print("error", "Error: Could not read Goats from config file.")
         exit(EXIT_JSON_FILE)
 
 
@@ -976,12 +1002,9 @@ def get_version_trivy():
     Called by process_trivy().
     :return: String with version
     """
-    if args.skipTrivy:
-        return
-
     # Trivy outputs version in stdout as: "Version: vn.n.n"
-    trivy_version = get_version(container_image=docker_image_trivy, command_to_run='--version').split(" ")[1]
-    return trivy_version
+    if not args.skipTrivy:
+        return get_version(container_image=docker_image_trivy, command_to_run='--version').split(" ")[1]
 
 
 def get_version_tfsec():
@@ -990,12 +1013,9 @@ def get_version_tfsec():
     Called by process_tfsec().
     :return: String with version
     """
-    if args.skipTfsec:
-        return
-
     # tfsec outputs version in stdout as: "vn.n.n"
-    tfsec_version = get_version(container_image=docker_image_tfsec, command_to_run='--version')
-    return tfsec_version
+    if not args.skipTfsec:
+        return get_version(container_image=docker_image_tfsec, command_to_run='--version')
 
 
 def get_version_terrascan():
@@ -1004,12 +1024,9 @@ def get_version_terrascan():
     Called by process_terrascan().
     :return: String with version
     """
-    if args.skipTerrascan:
-        return
-
     # Terrascan outputs version in stdout as: "version: vn.n.n"
-    terrascan_version = get_version(container_image=docker_image_terrascan, command_to_run='version').split(" ")[1]
-    return terrascan_version
+    if not args.skipTerrascan:
+        return get_version(container_image=docker_image_terrascan, command_to_run='version').split(" ")[1]
 
 
 def get_version(container_image, command_to_run):
@@ -1018,27 +1035,17 @@ def get_version(container_image, command_to_run):
     Called by get_version_tfsec(), get_version_terrascan() and get_version_trivy().
     :return: String containing Container version or "None"
     """
+    docker_pull_image(container_image, args.forceDockerPull)
+
     dc = docker.from_env()
-
-    # if args.forceDockerPull == False (docker binary --pull "missing" flag behaviour)
-    if not args.forceDockerPull:
-        try:
-            dc.images.get(container_image)
-        except docker.errors.ImageNotFound:
-            dc.images.pull(container_image)
-    else:  # if args.forceDockerPull == True (docker binary --pull "always" flag behaviour)
-        try:
-            dc.images.pull(container_image)
-        except docker.errors.ImageNotFound:
-            args.verbose and print("Error: Could not find Docker image {}".format(container_image))
-
     try:
         ctn = dc.containers.run(image=container_image,
                                 command=command_to_run,
                                 remove=True, tty=False, detach=False)
-        container_version = ctn.decode("utf-8").replace('\n', '')
     except docker.errors.ContainerError:
         container_version = "None"
+    else:
+        container_version = ctn.decode("utf-8").replace('\n', '')
 
     return container_version
 
@@ -1047,34 +1054,38 @@ def docker_pull_image(image_name, force_docker_pull):
     """
     Pulls the image before described in config file
     docker.containers.run() and docker.api.create_container() don't include a --pull flag
+    :param image_name: Container image to be downloaded, format: 'repo/image:tag'
+    :param force_docker_pull: If Docker should always download an image or not.
     :return: True if succeeded, False if exception raised
     """
     dc = docker.from_env()
-    try:
-        if force_docker_pull == "always":
-            # We will download if --pull "always"
+    if force_docker_pull == "always":
+        # We will download if --pull "always"
+        log_and_print("info", "Downloading Docker image for {}.".format(image_name))
+        try:
             dc.api.pull(image_name)
-            args.verbose and print("Docker just downloaded image {}.".format(image_name))
+        except docker.errors.APIError as e:
+            log_and_print("error", "{}".format(e.args))
+            return False
         else:
-            # We will check if we have the image because --pull "missing"
-            found_image = False
-            for image in dc.images.list(all=True):
-                if image.attrs['RepoDigests'][0].split("@")[0] == image_name.split(":")[0]:
-                    found_image = True
-                    args.verbose and print("Docker image {} found and will not be downloaded.".format(image_name))
-                    break
-            if not found_image:
-                # We don't have the image and --pull "missing"
+            log_and_print("info", "Docker just downloaded image {}.".format(image_name))
+    else:
+        # We will check if we have the image because --pull "missing"
+        found_image = False
+        for image in dc.images.list(all=True):
+            if image.attrs['RepoDigests'][0].split("@")[0] == image_name.split(":")[0]:
+                found_image = True
+                log_and_print("debug", "Docker image {} found and will not be downloaded.".format(image_name))
+                break
+        if not found_image:
+            # We don't have the image and --pull "missing"
+            try:
                 dc.api.pull(image_name)
-                args.verbose and print("Docker just downloaded image {}.".format(image_name))
-
-        return True
-    except docker.errors.ImageNotFound:
-        pass
-        return False
-    except docker.errors.APIError:
-        pass
-        return False
+            except docker.errors.APIError as e:
+                log_and_print("error", "{}".format(e.args))
+                return False
+            else:
+                log_and_print("info", "Docker just downloaded image {}.".format(image_name))
 
 
 def prune_images():
@@ -1083,13 +1094,19 @@ def prune_images():
     :return: True
     """
     dc = docker.from_env()
-    try:
-        for image in dc.images.list(all=True, filters={'dangling': True}):
-            for key, value in config["images"].items():
-                if image.attrs['RepoDigests'][0].split("@")[0] in value:
+    for image in dc.images.list(all=True, filters={'dangling': True}):
+        for key, value in config["images"].items():
+            if image.attrs['RepoDigests'][0].split("@")[0] in value:
+                try:
                     dc.images.remove(image.id)
-    except docker.errors.ContainerError:
-        pass
+                except docker.errors.ContainerError as e:
+                    log_and_print("error", "{}".format(e.stderr))
+                except docker.errors.ImageNotFound as e:
+                    log_and_print("error", "{}".format(e.args))
+                else:
+                    # images.remove() does not return anything
+                    log_and_print("debug", "Removed {}, image.short_id={}"
+                                  .format(image.attrs['Config']['Image'], image.short_id))
 
 
 def prune_containers():
@@ -1102,12 +1119,17 @@ def prune_containers():
         filters.append({'status': 'exited', 'ancestor': config["scanners"][scanner]["image"].split(":")[0]})
 
     dc = docker.from_env()
-    try:
-        for filter_dict in filters:
-            for container in dc.containers.list(all=True, filters=filter_dict):
+
+    for filter_dict in filters:
+        for container in dc.containers.list(all=True, filters=filter_dict):
+            try:
                 container.remove()
-    except docker.errors.ContainerError:
-        pass
+            except docker.errors.ContainerError as e:
+                log_and_print("error", "{}".format(e.stderr))
+            else:
+                # container.remove() does not return anything
+                log_and_print("debug", "Removed {}, container.short_id={}"
+                              .format(container.attrs['Config']['Image'], container.short_id))
 
 
 def clean_up():
@@ -1121,37 +1143,43 @@ def clean_up():
     if not args.cleanup and not args.onlyCleanup:
         return
 
-    args.verbose and print("Starting clean up...")
+    log_and_print("info", "Starting clean up...")
 
     dc = docker.from_env()
 
     # Remove Docker images: $ docker rmi [image]
-    # There shall be no container to be pruned because of flag remove=True used when running the containers
-    try:
-        for scanner in config["scanners"]:
+    # There shall be containers to be pruned because I can't use flag remove=True using create_container() function
+    for scanner in config["scanners"]:
+        try:
             dc.images.remove(config["scanners"][scanner]["image"].split(":")[0])
 
-    except docker.errors.ImageNotFound:
-        # The image should be there. If it isn't, fail silently.
-        pass
-    except docker.errors.ContainerError:
-        args.verbose and print("Error: Could not remove all Docker images.")
-        pass
+        except docker.errors.ImageNotFound as e:
+            # The image should be there.
+            log_and_print("error", "{}".format(e.args))
+
+        except docker.errors.ContainerError:
+            log_and_print("error", "Error: Could not remove Docker image {}.".format(
+                config["scanners"][scanner]["image"].split(":")[0]
+            ))
 
     # Remove goat clones (only dest_clones/results folder will remain):
     if not args.source:
         json_goats = get_goats(goats_file)
         for target in json_goats["targets"]:
             # This will remove directories; the reason for having running_as_root()
-            if os.path.isdir(dest_clones + "/" + target["local_folder"]):
+            target_dir = dest_clones + "/" + target["local_folder"]
+            if os.path.isdir(target_dir):
                 # We know the directory is there
                 try:
-                    shutil.rmtree(dest_clones + "/" + target["local_folder"])
+                    shutil.rmtree(target_dir)
                 except PermissionError:
-                    dest_not_writable(dest_clones + "/" + target["local_folder"])
+                    dest_not_writable(target_dir)
+                else:
+                    log_and_print("debug", "Directory {} was removed.".format(target_dir))
 
+    # Do not send this message to log
     args.verbose and print("Done.\n")
-    return True     # Do not remove
+    return True  # Do not remove
 
 
 def get_goats(goats):
@@ -1167,7 +1195,140 @@ def get_goats(goats):
         return False
 
 
+def log_and_print(msg_loglevel, message):
+    """
+    Logs a message to stdout and/ot file
+    :param msg_loglevel: Log level defined for that message
+    :param message: The message itself
+    :return: True
+    """
+    # Log levels to output to stdout and to logfile
+    switch = {
+        "debug": 0,
+        "info": 1,
+        "warn": 2,
+        "error": 3,
+        "critical": 4
+    }
+    # Print to stdout: if message loglevel is not debug
+    switch.get(msg_loglevel) > 0 and verbose_mode and print(message)
+
+    # Print to log: if message loglevel is in the range configured to be reported:
+    if switch.get(msg_loglevel) >= switch.get(log_level, 1):
+        logging_enabled and write_to_log(msg_level=msg_loglevel, log_dest=log_output, message_to_log=message)
+
+
+def write_to_log(msg_level, log_dest, message_to_log):
+    """
+    Writes JSON dict to file.
+    Called by main().
+    :param msg_level: Log level before the message
+    :param log_dest: Destination where data will be written
+    :param message_to_log: Text to be logged
+    :return: True for success, otherwise exits with error code in case of exception
+    """
+    log_datetime = str(datetime.datetime.now().strftime(log_datetime_format))
+    try:
+        # Creates recursive path if it doesn't exist (should have been created by start_logging()
+        Path(results_destination).mkdir(parents=True, exist_ok=True)
+        with open(log_dest, 'a') as f:
+            # If a message_to_log comes with a '\n' at the end
+            message_to_log = message_to_log.strip('\n')
+            if not logging_as_json:
+                full_msg = str(log_datetime + log_sep + msg_level + log_sep + message_to_log + '\n')
+                f.write(full_msg)
+            else:
+                full_msg = {
+                    "datetime": str(log_datetime),
+                    "level": str(msg_level),
+                    "message": str(message_to_log)
+                }
+                f.write(json.dumps(full_msg) + "\n")
+    except PermissionError:
+        dest_not_writable(log_dest)
+
+
+def prepare_signal_stats(json_object):
+    """
+    Reads vulnerability numbers from statistics to format a JSON that will be used to choose exit signals
+    :param json_object: JSON containing all reports
+    :return: JSON dict with number of vulnerabilities by severity
+    """
+    int_high, int_medium, int_low = 0, 0, 0
+    for target in json_object:
+        if target == "milking_the_goat":
+            continue
+        try:
+            for scanner in json_object[target]:
+                mylist = [x for x in config["scanners"]]
+                if scanner not in mylist:
+                    continue
+                try:
+                    int_high += int(json_object[target][scanner]["failed_by_severity"]["high"])
+                    int_medium += int(json_object[target][scanner]["failed_by_severity"]["medium"])
+                    int_low += int(json_object[target][scanner]["failed_by_severity"]["low"])
+                except (KeyError or TypeError):
+                    # Could not find "failed_by_severity" key
+                    pass
+        except (KeyError or TypeError):
+            pass
+
+    signal_stats = {
+        "high": int_high,
+        "medium": int_medium,
+        "low": int_low
+    }
+
+    return signal_stats
+
+
+def choose_exit_signal(json_object):
+    """
+    Chooses the exit signal when used in CI.
+    Makes more sense when only one image is assessed in each run, because many images may be assessed but
+    only one signal will be returned.
+    :param json_object: JSON object containing the summary for each target image
+    :return: exit signal, depending on config and vulnerabilities found
+    """
+    int_high = json_object["high"]
+    int_medium = json_object["medium"]
+    int_low = json_object["low"]
+
+    log_and_print("debug", "Found: {} high, {} medium and {} low vulnerabilities."
+                  .format(int_high, int_medium, int_low))
+    if bool_fail_on_high and (int_high > 0):
+        log_and_print("debug", "Exiting with signal EXIT_FAIL_HIGH: {}".format(EXIT_FAIL_HIGH))
+        sys.exit(EXIT_FAIL_HIGH)
+    elif bool_fail_on_medium and (int_high > 0 or int_medium > 0):
+        log_and_print("debug", "Exiting with signal EXIT_FAIL_MEDIUM: {}".format(EXIT_FAIL_MEDIUM))
+        sys.exit(EXIT_FAIL_MEDIUM)
+    elif bool_fail_on_low and (int_high > 0 or int_medium > 0 or int_low > 0):
+        log_and_print("debug", "Exiting with signal EXIT_FAIL_LOW: {}".format(EXIT_FAIL_LOW))
+        sys.exit(EXIT_FAIL_LOW)
+
+    log_and_print("debug", "Exiting with signal EXIT_OK: {}".format(EXIT_OK))
+    sys.exit(EXIT_OK)
+
+
+def start_logging(log_dest):
+    """
+    Removes and recreates logfile, according to config
+    :param log_dest: Full path to log file
+    :return: True if successful, otherwise exits with error signal
+    """
+    try:
+        if logging_overwrite_file_if_exists:
+            os.remove(log_dest)
+        Path(log_dest).touch(exist_ok=True)
+    except FileNotFoundError:
+        Path(results_destination).mkdir(parents=True, exist_ok=True)
+        Path(log_dest).touch(exist_ok=True)
+    except PermissionError:
+        dest_not_writable(log_dest)
+
+
 def main():
+    start_logging(log_dest=log_output)
     sanity_checks()
     create_json_structure()
     run_scan()
@@ -1175,6 +1336,7 @@ def main():
     prune_containers()
     prune_images()
     clean_up()
+    choose_exit_signal(prepare_signal_stats(json_milk))
 
 
 # Main scope: Argument Parser
@@ -1196,6 +1358,7 @@ parser.add_argument("-y", "--skip-trivy", help="Skip Trivy execution", dest='ski
 parser.add_argument("--force-docker-pull", help="Make Docker pull the image on every run",
                     dest='forceDockerPull', action='store_true')
 parser.add_argument("-v", "--verbose", help="Verbose mode", dest='verbose', action='store_true')
+parser.add_argument("-o", "--output", help="Override output_folder parameter in config file", dest='output')
 parser.add_argument("-i", "--ignore-root", help="Ignore being executed as root", dest='ignoreRoot', action='store_true')
 parser.add_argument("-x", "--cleanup", help="Enable clean up after execution", dest='cleanup', action='store_true')
 parser.add_argument("--only-cleanup", help="Execute a clean up and exit", dest='onlyCleanup', action='store_true')
@@ -1231,9 +1394,28 @@ try:
     results_destination = config["output"]["results_destination"]
     goats_destination = config["output"]["goats_destination"]
     results_filename = config["output"]["results_filename"]
+    bool_command_line_args = config["output"]["command_line_args"]
+    bool_docker_version = config["output"]["docker_version"]
     # Logging
-    bool_command_line_args = config["logging"]["command_line_args"]
-    bool_docker_version = config["logging"]["docker_version"]
+    verbose_mode = config["logging"]["verbose_stdout"]
+    logging_enabled = config["logging"]["logging_enabled"]
+    logging_as_json = config["logging"]["logging_as_json"]
+    logging_overwrite_file_if_exists = config["logging"]["logging_overwrite_file_if_exists"]
+    log_level = config["logging"]["logging_level"]
+    log_output = config["logging"]["logging_file"]
+    log_sep = config["logging"]["logging_separator"]
+    log_datetime_format = config["logging"]["logging_datetime_format"]
+    # Settings
+    bool_ignore_running_as_root = config["settings"]["ignore_running_as_root"]
+    # CI, fail on findings
+    bool_fail_on_high = config["ci"]["fail_on_findings"]["fail_on_high"]
+    bool_fail_on_medium = config["ci"]["fail_on_findings"]["fail_on_medium"]
+    bool_fail_on_low = config["ci"]["fail_on_findings"]["fail_on_low"]
+    # CI, exit signals
+    EXIT_OK = int(config["ci"]["exit_signals"]["exit_ok"])
+    EXIT_FAIL_LOW = int(config["ci"]["exit_signals"]["exit_fail_low"])
+    EXIT_FAIL_MEDIUM = int(config["ci"]["exit_signals"]["exit_fail_medium"])
+    EXIT_FAIL_HIGH = int(config["ci"]["exit_signals"]["exit_fail_high"])
 
     # About output formats:
     # https://github.com/bridgecrewio/checkov/blob/master/docs/2.Basics/Reviewing%20Scan%20Results.md
@@ -1248,16 +1430,28 @@ try:
     results_terrascan = ""
     results_trivy = ""
 
+    # Overrides sinker_output_folder from config file
+    if args.output:
+        results_destination = args.output
+
+    # Overrides ignore_running_as_root from config file
+    if args.ignoreRoot:
+        bool_ignore_running_as_root = True
+
+    # Overrides verbose_mode from config file
+    if args.verbose:
+        verbose_mode = True
+
     # Main JSON for the app
     json_milk = {}
+
 except (PermissionError, FileNotFoundError):
     missing_config(args.config)
 
-finally:
+else:
     # clean_up() depends on config[] and config section above depends on ArgParser (defined before)
     args.version and print_version() and sys.exit(EXIT_OK)
     args.onlyCleanup and clean_up() and sys.exit(EXIT_OK)
-
 
 if __name__ == "__main__":
     main()

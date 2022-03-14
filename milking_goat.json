@@ -33,11 +33,35 @@
   "output": {
     "clones_destination": "/tmp",
     "goats_destination": "/tmp/goats",
-    "results_destination": "/tmp/results",
-    "results_filename": "milking_goat_results.json"
-  },
-  "logging": {
+    "results_destination": "/tmp/milking_goat",
+    "results_filename": "milking_goat_results.json",
     "docker_version": false,
     "command_line_args": false
+  },
+  "logging": {
+    "verbose_stdout": true,
+    "logging_enabled": true,
+    "logging_as_json": false,
+    "logging_overwrite_file_if_exists": true,
+    "logging_level": "debug",
+    "logging_file": "/tmp/milking_goat/milking_goat.log",
+    "logging_separator": "\t",
+    "logging_datetime_format": "%Y-%m-%d %H:%M:%S"
+  },
+  "settings": {
+    "ignore_running_as_root": false
+  },
+  "ci": {
+    "fail_on_findings": {
+      "fail_on_high": false,
+      "fail_on_medium": false,
+      "fail_on_low": false
+    },
+    "exit_signals": {
+      "exit_ok": 0,
+      "exit_fail_low": 1,
+      "exit_fail_medium": 2,
+      "exit_fail_high": 3
+    }
   }
 }
